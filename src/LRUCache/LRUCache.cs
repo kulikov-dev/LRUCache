@@ -1,24 +1,37 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using System.Text;
 using System.Threading;
 
 namespace Caching
 {
     /// <summary>
-    /// An LRU Cache implementation.
+    /// An LRU Cache implementation
     /// </summary>
-    /// <typeparam name="K">The key type.</typeparam>
-    /// <typeparam name="V">The value type.</typeparam>
-    public class LRUCache<K, V>
+    /// <typeparam name="K"> The key type </typeparam>
+    /// <typeparam name="V"> The value type </typeparam>
+    public class LRUCache<K, V> : IEnumerable<K>
     {
-        private readonly Dictionary<K, CacheNode> _entries;
-        private readonly int _capacity;
-        private CacheNode _head;
-        private CacheNode _tail;
-        private TimeSpan _ttl;
+        /// <summary>
+        /// Entries in the cache
+        /// </summary>
+        private readonly Dictionary<K, CacheNode> entries;
+
+        /// <summary>
+        /// The maximum number of entries in the cache
+        /// </summary>
+        private readonly int capacity;
+
+        /// <summary>
+        /// Linked list head
+        /// </summary>
+        private CacheNode head;
+
+        /// <summary>
+        /// Linked list tail
+        /// </summary>
+        private CacheNode tail;
+        private TimeSpan ttl;
         private Timer _timer;
         private int _count;
         private bool _refreshEntries;
@@ -42,30 +55,21 @@ namespace Caching
             int seconds = 0,
             bool refreshEntries = true)
         {
-            this._capacity = capacity;
-            this._entries = new Dictionary<K, CacheNode>(this._capacity);
-            this._head = null;
-            this._tail = null;
-            this._count = 0;
-            this._ttl = new TimeSpan(hours, minutes, seconds);
-            this._refreshEntries = refreshEntries;
-            if (this._ttl > TimeSpan.Zero)
+            this.capacity = capacity;
+            entries = new Dictionary<K, CacheNode>(this.capacity);
+            head = null;
+            tail = null;
+            _count = 0;
+            ttl = new TimeSpan(hours, minutes, seconds);
+            _refreshEntries = refreshEntries;
+            if (ttl > TimeSpan.Zero)
             {
-                this._timer = new Timer(
+                _timer = new Timer(
                     Purge,
                     null,
-                    (int)this._ttl.TotalMilliseconds,
+                    (int)ttl.TotalMilliseconds,
                     5000); // 5 seconds
             }
-        }
-
-        private class CacheNode
-        {
-            public CacheNode Next { get; set; }
-            public CacheNode Prev { get; set; }
-            public K Key { get; set; }
-            public V Value { get; set; }
-            public DateTime LastAccessed { get; set; }
         }
 
         /// <summary>
@@ -73,7 +77,7 @@ namespace Caching
         /// </summary>
         public int Count
         {
-            get { return _entries.Count; }
+            get { return entries.Count; }
         }
 
         /// <summary>
@@ -81,7 +85,7 @@ namespace Caching
         /// </summary>
         public int Capacity
         {
-            get { return this._capacity; }
+            get { return capacity; }
         }
 
         /// <summary>
@@ -89,7 +93,7 @@ namespace Caching
         /// </summary>
         public bool IsFull
         {
-            get { return this._count == this._capacity; }
+            get { return _count == capacity; }
         }
 
         /// <summary>
@@ -101,12 +105,12 @@ namespace Caching
             CacheNode entry;
             value = default(V);
 
-            if (!this._entries.TryGetValue(key, out entry))
+            if (!entries.TryGetValue(key, out entry))
             {
                 return false;
             }
 
-            if (this._refreshEntries)
+            if (_refreshEntries)
             {
                 MoveToHead(entry);
             }
@@ -138,18 +142,19 @@ namespace Caching
         public bool TryAdd(K key, V value)
         {
             CacheNode entry;
-            if (!this._entries.TryGetValue(key, out entry))
+            if (!entries.TryGetValue(key, out entry))
             {
                 // Add the entry
                 lock (this)
                 {
-                    if (!this._entries.TryGetValue(key, out entry))
+                    if (!entries.TryGetValue(key, out entry))
                     {
-                        if (this.IsFull)
+                        if (IsFull)
                         {
                             // Re-use the CacheNode entry
-                            entry = this._tail;
-                            _entries.Remove(this._tail.Key);
+                            (entry as IDisposable)?.Dispose();
+                            entry = tail;
+                            entries.Remove(tail.Key);
 
                             // Reset with new values
                             entry.Key = key;
@@ -161,7 +166,7 @@ namespace Caching
                         }
                         else
                         {
-                            this._count++;
+                            _count++;
                             entry = new CacheNode()
                             {
                                 Key = key,
@@ -169,7 +174,7 @@ namespace Caching
                                 LastAccessed = DateTime.UtcNow
                             };
                         }
-                        _entries.Add(key, entry);
+                        entries.Add(key, entry);
                     }
                 }
             }
@@ -188,9 +193,9 @@ namespace Caching
             // We don't need to lock here because two threads at this point
             // can both happily perform this check and set, since they are
             // both atomic.
-            if (null == this._tail)
+            if (null == tail)
             {
-                this._tail = this._head;
+                tail = head;
             }
 
             return true;
@@ -204,11 +209,65 @@ namespace Caching
         {
             lock (this)
             {
-                this._entries.Clear();
-                this._head = null;
-                this._tail = null;
+                if (typeof(IDisposable).IsAssignableFrom(typeof(V)))
+                {
+                    foreach (var value in entries.Values)
+                    {
+                        (value.Value as IDisposable)?.Dispose();
+                    }
+                }
+
+                entries.Clear();
+                head = null;
+                tail = null;
                 return true;
             }
+        }
+
+        /// <summary>
+        /// Get least used cache key
+        /// </summary>
+        /// <returns>  The cache least used key  </returns>
+        public K GetLeastUsedValue()
+        {
+            if (Count == 0 || tail == null)
+            {
+                return default;
+            }
+
+            return tail.Key;
+        }
+
+        /// <summary>
+        /// Remove item from cache
+        /// </summary>
+        /// <param name="key"> An cache key </param>
+        public void Remove(K key)
+        {
+            if (!entries.ContainsKey(key))
+            {
+                return;
+            }
+
+            Remove(entries[key]);
+        }
+
+        /// <summary>
+        /// Returns an enumerator that iterates through the collection.
+        /// </summary>
+        /// <returns> Enumerator </returns>
+        public IEnumerator<K> GetEnumerator()
+        {
+            return entries.Keys.GetEnumerator();
+        }
+
+        /// <summary>
+        /// Returns an enumerator that iterates through the collection.
+        /// </summary>
+        /// <returns> Enumerator </returns>
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return entries.Keys.GetEnumerator();
         }
 
         /// <summary>
@@ -217,7 +276,7 @@ namespace Caching
         /// <param name="entry">The CacheNode entry to move up.</param>
         private void MoveToHead(CacheNode entry)
         {
-            if (entry == this._head)
+            if (entry == head)
             {
                 return;
             }
@@ -226,25 +285,25 @@ namespace Caching
             // which is not thread safe by itself.
             lock (this)
             {
-                RemoveFromLL(entry);
+                RemoveFromList(entry);
                 AddToHead(entry);
             }
         }
 
         private void Purge(object state)
         {
-            if (this._ttl <= TimeSpan.Zero || this._count == 0)
+            if (ttl <= TimeSpan.Zero || _count == 0)
             {
                 return;
             }
 
             lock (this)
             {
-                var current = this._tail;
+                var current = tail;
                 var now = DateTime.UtcNow;
 
                 while (null != current
-                    && (now - current.LastAccessed) > this._ttl)
+                    && (now - current.LastAccessed) > ttl)
                 {
                     Remove(current);
                     // Going backwards
@@ -253,20 +312,28 @@ namespace Caching
             }
         }
 
+        /// <summary>
+        /// Add entry to the cache list
+        /// </summary>
+        /// <param name="entry"> Entry </param>
         private void AddToHead(CacheNode entry)
         {
             entry.Prev = null;
-            entry.Next = this._head;
+            entry.Next = head;
 
-            if (null != this._head)
+            if (null != head)
             {
-                this._head.Prev = entry;
+                head.Prev = entry;
             }
 
-            this._head = entry;
+            head = entry;
         }
 
-        private void RemoveFromLL(CacheNode entry)
+        /// <summary>
+        /// Remove entry from the cache list
+        /// </summary>
+        /// <param name="entry"> Entry </param>
+        private void RemoveFromList(CacheNode entry)
         {
             var next = entry.Next;
             var prev = entry.Prev;
@@ -280,23 +347,58 @@ namespace Caching
                 prev.Next = entry.Next;
             }
 
-            if (this._head == entry)
+            if (head == entry)
             {
-                this._head = next;
+                head = next;
             }
 
-            if (this._tail == entry)
+            if (tail == entry)
             {
-                this._tail = prev;
+                tail = prev;
             }
         }
 
+        /// <summary>
+        /// Remove entry from the cache list
+        /// </summary>
+        /// <param name="entry"> Entry </param>
         private void Remove(CacheNode entry)
         {
             // Only to be called while locked from Purge
-            RemoveFromLL(entry);
-            _entries.Remove(entry.Key);
-            this._count--;
+            RemoveFromList(entry);
+            entries.Remove(entry.Key);
+            _count--;
+        }
+
+        /// <summary>
+        /// Linked list entry
+        /// </summary>
+        private class CacheNode
+        {
+            /// <summary>
+            /// Next entry
+            /// </summary>
+            public CacheNode Next { get; set; }
+
+            /// <summary>
+            /// Previous entry
+            /// </summary>
+            public CacheNode Prev { get; set; }
+
+            /// <summary>
+            /// Key
+            /// </summary>
+            public K Key { get; set; }
+
+            /// <summary>
+            /// Value
+            /// </summary>
+            public V Value { get; set; }
+
+            /// <summary>
+            /// Last accessed date
+            /// </summary>
+            public DateTime LastAccessed { get; set; }
         }
     }
 }
