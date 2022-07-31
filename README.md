@@ -1,13 +1,14 @@
-LRUCache
+#### LRUCache
 ========
 
-What is it?
+##### What is it?
 -----------
 
-Fork. A lightweight thread-safe LRU cache for .NET.
-Added supports of IDisposable values.
+<b>Fork.</b>
+A lightweight thread-safe LRU cache for .NET.
+* Added supports of IDisposable values.
 
-Example Usage
+##### Example Usage
 -------------
 
 ``` csharp
