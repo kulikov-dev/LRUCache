@@ -10,7 +10,8 @@ namespace Caching
     /// </summary>
     /// <typeparam name="K"> The key type </typeparam>
     /// <typeparam name="V"> The value type </typeparam>
-    public class LRUCache<K, V> : IEnumerable<K>
+    /// <remarks> Supports IDisposable values </remarks>
+    public class LRUCache<K, V> : IEnumerable<K>, IDisposable
     {
         /// <summary>
         /// Entries in the cache
@@ -268,6 +269,14 @@ namespace Caching
         IEnumerator IEnumerable.GetEnumerator()
         {
             return entries.Keys.GetEnumerator();
+        }
+
+        /// <summary>
+        /// Dispose cache
+        /// </summary>
+        public void Dispose()
+        {
+            Clear();
         }
 
         /// <summary>
